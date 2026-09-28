@@ -7,7 +7,7 @@ export async function GET(request: NextRequest) {
     const secret = new TextEncoder().encode(secretText); // Convert the secret key to a Uint8Array
 
     const user = await jose.jwtVerify(
-        loginToken,
+        loginToken || "",
         secret
     )
     console.log(user)
