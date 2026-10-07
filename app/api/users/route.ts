@@ -1,8 +1,12 @@
 import prisma from "@/lib/prisma";
+import { userRegistrationRequestSchema } from "@/types/dto/UserRegistrationRequest";
+import { UserSelfUpdateRequestSchema } from "@/types/dto/UserSelfUpdateRequest.";
+import { UserUpdatedByAdminRequestSchema } from "@/types/dto/UserUpdatedByAdminRequest";
 import { RequestUserType } from "@/types/requestUser";
 import { getUser, isprivileged } from "@/utils/authentication";
 import bcrypt from "bcryptjs";
 import { NextRequest, NextResponse } from "next/server";
+import z from "zod";
 
 //GET request to fetch all users
 export async function GET(request: NextRequest) {
@@ -81,71 +85,62 @@ export async function POST(request: NextRequest) {
   // Check if the user has the required privilege to create a new user
 
   const body = await request.json();
+  try {
+    const parseBody = userRegistrationRequestSchema.parse(body); //validate the request body using zod schema
 
-  if (body.email == null) {
-    return NextResponse.json(
-      {
-        message: "Email is required",
+    const existingUser = await prisma.user.findUnique({
+      where: {
+        email: body.email,
       },
-      { status: 400 },
-    );
-  }
-  if (body.firstName == null) {
-    return NextResponse.json(
-      {
-        message: "First name is required",
-      },
-      { status: 400 },
-    );
-  }
-  if (body.lastName == null) {
-    return NextResponse.json(
-      {
-        message: "Last name is required",
-      },
-      { status: 400 },
-    );
-  }
-  if (body.password == null) {
-    return NextResponse.json(
-      {
-        message: "Password is required",
-      },
-      { status: 400 },
-    );
-  }
+    });
+    if (existingUser != null) {
+      return NextResponse.json(
+        {
+          message: "A user with this email already exists.",
+        },
+        { status: 409 },
+      );
+    }
 
-  const existingUser = await prisma.user.findUnique({
-    where: {
-      email: body.email,
+    const passwordHash = await bcrypt.hash(body.password, 12);
+
+    await prisma.user.create({
+      data: {
+        email: body.email,
+        firstName: body.firstName,
+        lastName: body.lastName,
+        password: passwordHash,
+        phone: body.phone,
+      },
+    });
+    return NextResponse.json(
+      {
+        message: "User created successfully",
+      },
+      { status: 201 },
+    );
+  } catch (error) {
+    if(error instanceof z.ZodError) {
+      
+      return NextResponse.json(
+        {
+          message: error.issues[0]?.message ?? "Invalid user data provided.",
     },
-  });
-  if (existingUser != null) {
+    
+      { status: 400 },
+
+    );
+    }
+    console.log(error);
+
+
     return NextResponse.json(
       {
-        message: "A user with this email already exists.",
+        message: "Invalid user data provided.",
       },
-      { status: 409 },
+      { status: 400 },
     );
   }
-
-  const passwordHash = await bcrypt.hash(body.password, 12);
-
-  await prisma.user.create({
-    data: {
-      email: body.email,
-      firstName: body.firstName,
-      lastName: body.lastName,
-      password: passwordHash,
-      phone: body.phone,
-    },
-  });
-  return NextResponse.json(
-    {
-      message: "User created successfully",
-    },
-    { status: 201 },
-  );
 }
 
 export async function PUT(request: NextRequest) {
@@ -163,9 +158,14 @@ export async function PUT(request: NextRequest) {
     );
   }
 
-  const body = await request.json();
 
-  if (reqestedUser.id == id) {
+try{
+   const body = await request.json();
+// user going to edit itslef not allow role status and privileges change
+  if (reqestedUser.id == id) { 
+
+  UserSelfUpdateRequestSchema.parse(body); //validate the request body using zod schema
+
     const user = await prisma.user.findUnique({
       where: {
         id: id,
@@ -181,7 +181,8 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    await prisma.user.update({//update the user in the database cannot vhange all the fields of the user only the fields that are allowed to be changed by the user
+    await prisma.user.update({
+      //update the user in the database cannot vhange all the fields of the user only the fields that are allowed to be changed by the user
       where: {
         id: id,
       },
@@ -199,7 +200,11 @@ export async function PUT(request: NextRequest) {
       { status: 200 },
     );
   } else {
+
+
     const havePrivilege = await isprivileged(request, "users:edit");
+
+    
     if (!havePrivilege) {
       return NextResponse.json(
         {
@@ -211,11 +216,18 @@ export async function PUT(request: NextRequest) {
         },
       );
     }
+
+UserUpdatedByAdminRequestSchema.parse(body); //validate the request body using zod schema
+
     const user = await prisma.user.findUnique({
       where: {
         id: id || "0000",
       },
     });
+
+
+
+
     if (user == null) {
       return NextResponse.json(
         {
@@ -225,9 +237,9 @@ export async function PUT(request: NextRequest) {
       );
     }
     await prisma.user.update({
-      //update the user in the database
+      //update the user in the database by the Admin user can change all the fields of the user
       where: {
-        id: id || "0000", //no access to id change
+        id: id || "0000", //no access to id change for admin
       },
       data: {
         email: body.email || user.email,
@@ -247,4 +259,24 @@ export async function PUT(request: NextRequest) {
       { status: 200 },
     );
   }
+
+}catch(error){
+  if(error instanceof z.ZodError) {
+    return NextResponse.json(
+      {
+        message: error.issues[0]?.message ?? "Invalid user data provided.",
+      },
+      { status: 400 },
+    );
+  }
+  return NextResponse.json(
+    {
+      message: "Server error occurred while updating the user.",
+    },
+    { status: 500 },
+  );
+
+}
+
+ 
 }
